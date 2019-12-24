@@ -47,7 +47,7 @@ public class PictureSelectionModel {
 
     /**
      * @param themeStyleId PictureSelector Theme style
-     * @return 废弃 改为动态设置
+     * @return PictureSelectionModel
      */
     public PictureSelectionModel theme(@StyleRes int themeStyleId) {
         selectionConfig.themeStyleId = themeStyleId;
@@ -56,7 +56,7 @@ public class PictureSelectionModel {
 
     /**
      * @param locale Language
-     * @return
+     * @return PictureSelectionModel
      */
     public PictureSelectionModel setLanguage(int language) {
         selectionConfig.language = language;
@@ -117,6 +117,16 @@ public class PictureSelectionModel {
     }
 
     /**
+     * @param isMultipleSkipCrop Whether multiple images can be skipped when cropping
+     * @return
+     */
+    public PictureSelectionModel isMultipleSkipCrop(boolean isMultipleSkipCrop) {
+        selectionConfig.isMultipleSkipCrop = isMultipleSkipCrop;
+        return this;
+    }
+
+
+    /**
      * @param enablePreviewAudio Do you want to ic_play audio ?
      * @return
      */
@@ -162,6 +172,33 @@ public class PictureSelectionModel {
     }
 
     /**
+     * @param circleDimmedColor setCircleDimmedColor
+     * @return
+     */
+    public PictureSelectionModel setCircleDimmedColor(int circleDimmedColor) {
+        selectionConfig.circleDimmedColor = circleDimmedColor;
+        return this;
+    }
+
+    /**
+     * @param circleDimmedBorderColor setCircleDimmedBorderColor
+     * @return
+     */
+    public PictureSelectionModel setCircleDimmedBorderColor(int circleDimmedBorderColor) {
+        selectionConfig.circleDimmedBorderColor = circleDimmedBorderColor;
+        return this;
+    }
+
+    /**
+     * @param circleStrokeWidth setCircleStrokeWidth
+     * @return
+     */
+    public PictureSelectionModel setCircleStrokeWidth(int circleStrokeWidth) {
+        selectionConfig.circleStrokeWidth = circleStrokeWidth;
+        return this;
+    }
+
+    /**
      * @param showCropFrame Whether to show crop frame
      * @return
      */
@@ -201,6 +238,17 @@ public class PictureSelectionModel {
     }
 
     /**
+     * @param isWithVideoImage Whether the pictures and videos can be selected together
+     * @return
+     */
+    public PictureSelectionModel isWithVideoImage(boolean isWithVideoImage) {
+        selectionConfig.isWithVideoImage =
+                selectionConfig.selectionMode == PictureConfig.SINGLE
+                        || selectionConfig.chooseMode != PictureMimeType.ofAll() ? false : isWithVideoImage;
+        return this;
+    }
+
+    /**
      * @param maxSelectNum PictureSelector max selection
      * @return
      */
@@ -217,6 +265,25 @@ public class PictureSelectionModel {
         selectionConfig.minSelectNum = minSelectNum;
         return this;
     }
+
+    /**
+     * @param maxVideoSelectNum PictureSelector video max selection
+     * @return
+     */
+    public PictureSelectionModel maxVideoSelectNum(int maxVideoSelectNum) {
+        selectionConfig.maxVideoSelectNum = maxVideoSelectNum;
+        return this;
+    }
+
+    /**
+     * @param minVideoSelectNum PictureSelector video min selection
+     * @return
+     */
+    public PictureSelectionModel minVideoSelectNum(int minVideoSelectNum) {
+        selectionConfig.minVideoSelectNum = minVideoSelectNum;
+        return this;
+    }
+
 
     /**
      * @param Select whether to return directly
@@ -369,6 +436,15 @@ public class PictureSelectionModel {
      */
     public PictureSelectionModel compressQuality(int compressQuality) {
         selectionConfig.compressQuality = compressQuality;
+        return this;
+    }
+
+    /**
+     * @param returnEmpty No data can be returned
+     * @return
+     */
+    public PictureSelectionModel isReturnEmpty(boolean returnEmpty) {
+        selectionConfig.returnEmpty = returnEmpty;
         return this;
     }
 
@@ -819,6 +895,8 @@ public class PictureSelectionModel {
     /**
      * # replace for setPictureWindowAnimationStyle();
      * Start to select media and wait for result.
+     * <p>
+     * # Use PictureWindowAnimationStyle to achieve animation effects
      *
      * @param requestCode Identity of the request Activity or Fragment.
      */
@@ -862,10 +940,12 @@ public class PictureSelectionModel {
 
     /**
      * 提供外部预览图片方法-带自定义下载保存路径
+     * # 废弃 由于Android Q沙盒机制 此方法不在需要了
      *
      * @param position
      * @param medias
      */
+    @Deprecated
     public void openExternalPreview(int position, String directory_path, List<LocalMedia> medias) {
         if (selector != null) {
             selector.externalPicturePreview(position, directory_path, medias,

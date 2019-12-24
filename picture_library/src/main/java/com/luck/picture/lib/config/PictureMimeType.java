@@ -79,48 +79,17 @@ public final class PictureMimeType {
         return MIME_TYPE_AVI;
     }
 
-    private final static String MIME_TYPE_PNG = "image/png";
-    private final static String MIME_TYPE_JPEG = "image/jpeg";
-    private final static String MIME_TYPE_BMP = "image/bmp";
-    private final static String MIME_TYPE_GIF = "image/gif";
-    private final static String MIME_TYPE_WEBP = "image/webp";
+    public final static String MIME_TYPE_PNG = "image/png";
+    public final static String MIME_TYPE_JPEG = "image/jpeg";
+    public final static String MIME_TYPE_BMP = "image/bmp";
+    public final static String MIME_TYPE_GIF = "image/gif";
+    public final static String MIME_TYPE_WEBP = "image/webp";
 
-    private final static String MIME_TYPE_3GP = "video/3gp";
-    private final static String MIME_TYPE_MP4 = "video/mp4";
-    private final static String MIME_TYPE_MPEG = "video/mpeg";
-    private final static String MIME_TYPE_AVI = "video/avi";
+    public final static String MIME_TYPE_3GP = "video/3gp";
+    public final static String MIME_TYPE_MP4 = "video/mp4";
+    public final static String MIME_TYPE_MPEG = "video/mpeg";
+    public final static String MIME_TYPE_AVI = "video/avi";
 
-    @Deprecated
-    public static int isPictureType(String pictureType) {
-        switch (pictureType) {
-            case "video/3gp":
-            case "video/3gpp":
-            case "video/3gpp2":
-            case "video/avi":
-            case "video/mp4":
-            case "video/quicktime":
-            case "video/x-msvideo":
-            case "video/x-matroska":
-            case "video/mpeg":
-            case "video/webm":
-            case "video/mp2ts":
-                return PictureConfig.TYPE_VIDEO;
-            case "audio/mpeg":
-            case "audio/amr-wb":
-            case "audio/x-ms-wma":
-            case "audio/x-wav":
-            case "audio/amr":
-            case "audio/wav":
-            case "audio/aac":
-            case "audio/mp4":
-            case "audio/quicktime":
-            case "audio/lamr":
-            case "audio/3gpp":
-                return PictureConfig.TYPE_AUDIO;
-            default:
-                return PictureConfig.TYPE_IMAGE;
-        }
-    }
 
     /**
      * 是否是gif
@@ -132,31 +101,6 @@ public final class PictureMimeType {
         return mimeType != null && (mimeType.equals("image/gif") || mimeType.equals("image/GIF"));
     }
 
-    /**
-     * 是否是视频
-     *
-     * @param pictureType
-     * @return
-     */
-    @Deprecated
-    public static boolean isVideo(String pictureType) {
-        switch (pictureType) {
-            case "video/3gp":
-            case "video/3gpp":
-            case "video/3gpp2":
-            case "video/avi":
-            case "video/mp4":
-            case "video/quicktime":
-            case "video/x-msvideo":
-            case "video/x-matroska":
-            case "video/mpeg":
-            case "video/webm":
-            case "video/mp2ts":
-                return true;
-            default:
-                return false;
-        }
-    }
 
     /**
      * 是否是视频
@@ -195,7 +139,13 @@ public final class PictureMimeType {
      * @return
      */
     public static boolean isHttp(String path) {
-        return !TextUtils.isEmpty(path) && (path.startsWith("http") || path.startsWith("https"));
+        if (TextUtils.isEmpty(path)) {
+            return false;
+        }
+        return path.startsWith("http")
+                || path.startsWith("https")
+                || path.startsWith("/http")
+                || path.startsWith("/https");
     }
 
     /**
@@ -204,7 +154,7 @@ public final class PictureMimeType {
      * @param file
      * @return
      */
-    public static String fileToType(File file) {
+    public static String getMimeType(File file) {
         if (file != null) {
             String name = file.getName();
             if (name.endsWith(".mp4") || name.endsWith(".avi")
@@ -225,18 +175,6 @@ public final class PictureMimeType {
     }
 
     /**
-     * is type Equal
-     *
-     * @param p1
-     * @param p2
-     * @return
-     */
-    @Deprecated
-    public static boolean mimeToEqual(String p1, String p2) {
-        return isPictureType(p1) == isPictureType(p2);
-    }
-
-    /**
      * 是否是同一类型
      *
      * @param oldMimeType
@@ -248,6 +186,12 @@ public final class PictureMimeType {
         return getMimeType(oldMimeType) == getMimeType(newMimeType);
     }
 
+    /**
+     * 获取图片mimeType
+     *
+     * @param path
+     * @return
+     */
     public static String getImageMimeType(String path) {
         try {
             if (!TextUtils.isEmpty(path)) {

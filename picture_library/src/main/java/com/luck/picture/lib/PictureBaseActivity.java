@@ -15,15 +15,12 @@ import android.os.Looper;
 import android.os.Message;
 import android.provider.MediaStore;
 import android.text.TextUtils;
-import android.util.Log;
 import android.view.View;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
-import com.luck.picture.lib.broadcast.BroadcastAction;
-import com.luck.picture.lib.broadcast.BroadcastManager;
 import com.luck.picture.lib.compress.Luban;
 import com.luck.picture.lib.compress.OnCompressListener;
 import com.luck.picture.lib.config.PictureConfig;
@@ -43,7 +40,6 @@ import com.luck.picture.lib.tools.PictureFileUtils;
 import com.luck.picture.lib.tools.SdkVersionUtils;
 import com.luck.picture.lib.tools.ToastUtils;
 import com.yalantis.ucrop.UCrop;
-import com.yalantis.ucrop.UCropMulti;
 import com.yalantis.ucrop.model.CutInfo;
 
 import java.io.File;
@@ -62,13 +58,14 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
     protected PictureSelectionConfig config;
     protected boolean openWhiteStatusBar, numComplete;
     protected int colorPrimary, colorPrimaryDark;
-    protected String cameraPath;
-    protected String originalPath;
     protected PictureLoadingDialog mLoadingDialog;
     protected List<LocalMedia> selectionMedias;
     protected Handler mHandler;
     protected View container;
-    protected boolean isPreviewLoading;
+    /**
+     * 是否走过onSaveInstanceState方法，用于内存不足情况
+     */
+    protected boolean isOnSaveInstanceState;
 
     /**
      * 是否使用沉浸式，子类复写该方法来确定是否采用沉浸式
@@ -125,8 +122,6 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
     protected void onCreate(Bundle savedInstanceState) {
         if (savedInstanceState != null) {
             config = savedInstanceState.getParcelable(PictureConfig.EXTRA_CONFIG);
-            cameraPath = savedInstanceState.getString(PictureConfig.EXTRA_BUNDLE_CAMERA_PATH);
-            originalPath = savedInstanceState.getString(PictureConfig.EXTRA_BUNDLE_ORIGINAL_PATH);
         } else {
             if (config == null) {
                 config = PictureSelectionConfig.getInstance();
@@ -155,6 +150,8 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
         }
         initWidgets();
         initPictureSelectorStyle();
+        // 重置回收状态
+        isOnSaveInstanceState = false;
     }
 
     /**
@@ -239,8 +236,7 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
-        outState.putString(PictureConfig.EXTRA_BUNDLE_CAMERA_PATH, cameraPath);
-        outState.putString(PictureConfig.EXTRA_BUNDLE_ORIGINAL_PATH, originalPath);
+        isOnSaveInstanceState = true;
         outState.putParcelable(PictureConfig.EXTRA_CONFIG, config);
     }
 
@@ -282,7 +278,6 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
                 e.printStackTrace();
             }
         }
-        isPreviewLoading = false;
     }
 
 
@@ -306,8 +301,6 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
                     mHandler.sendMessage(mHandler.obtainMessage(MSG_ASY_COMPRESSION_RESULT_SUCCESS,
                             new Object[]{result, files}));
                 } catch (Exception e) {
-                    BroadcastManager.getInstance(getApplicationContext())
-                            .action(BroadcastAction.ACTION_CLOSE_PREVIEW).broadcast();
                     onResult(result);
                     e.printStackTrace();
                 }
@@ -327,15 +320,11 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
 
                         @Override
                         public void onSuccess(List<LocalMedia> list) {
-                            BroadcastManager.getInstance(getApplicationContext())
-                                    .action(BroadcastAction.ACTION_CLOSE_PREVIEW).broadcast();
                             onResult(list);
                         }
 
                         @Override
                         public void onError(Throwable e) {
-                            BroadcastManager.getInstance(getApplicationContext())
-                                    .action(BroadcastAction.ACTION_CLOSE_PREVIEW).broadcast();
                             onResult(result);
                         }
                     }).launch();
@@ -359,20 +348,19 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
             for (int i = 0, j = size; i < j; i++) {
                 // 压缩成功后的地址
                 File file = files.get(i);
-                String path = file.getPath();
+                String path = file.getAbsolutePath();
                 LocalMedia image = images.get(i);
                 // 如果是网络图片则不压缩
                 boolean http = PictureMimeType.isHttp(path);
                 boolean flag = !TextUtils.isEmpty(path) && http;
-                image.setCompressed(flag ? false : true);
-                image.setCompressPath(flag ? "" : path);
+                boolean eqVideo = PictureMimeType.eqVideo(image.getMimeType());
+                image.setCompressed(eqVideo || flag ? false : true);
+                image.setCompressPath(eqVideo || flag ? "" : path);
                 if (isAndroidQ) {
-                    image.setAndroidQToPath(path);
+                    image.setAndroidQToPath(eqVideo ? null : path);
                 }
             }
         }
-        BroadcastManager.getInstance(getApplicationContext())
-                .action(BroadcastAction.ACTION_CLOSE_PREVIEW).broadcast();
         onResult(images);
     }
 
@@ -382,6 +370,93 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
      * @param originalPath
      */
     protected void startCrop(String originalPath) {
+        UCrop.Options options = new UCrop.Options();
+        int toolbarColor = 0, statusColor = 0, titleColor = 0;
+        boolean isChangeStatusBarFontColor;
+        if (config.cropStyle != null) {
+            if (config.cropStyle.cropTitleBarBackgroundColor != 0) {
+                toolbarColor = config.cropStyle.cropTitleBarBackgroundColor;
+            }
+            if (config.cropStyle.cropStatusBarColorPrimaryDark != 0) {
+                statusColor = config.cropStyle.cropStatusBarColorPrimaryDark;
+            }
+            if (config.cropStyle.cropTitleColor != 0) {
+                titleColor = config.cropStyle.cropTitleColor;
+            }
+
+            isChangeStatusBarFontColor = config.cropStyle.isChangeStatusBarFontColor;
+        } else {
+            if (config.cropTitleBarBackgroundColor != 0) {
+                toolbarColor = config.cropTitleBarBackgroundColor;
+            } else {
+                // 兼容老的Theme方式
+                toolbarColor = AttrsUtils.getTypeValueColor(this, R.attr.picture_crop_toolbar_bg);
+            }
+            if (config.cropStatusBarColorPrimaryDark != 0) {
+                statusColor = config.cropStatusBarColorPrimaryDark;
+            } else {
+                // 兼容老的Theme方式
+                statusColor = AttrsUtils.getTypeValueColor(this, R.attr.picture_crop_status_color);
+            }
+            if (config.cropTitleColor != 0) {
+                titleColor = config.cropTitleColor;
+            } else {
+                // 兼容老的Theme方式
+                titleColor = AttrsUtils.getTypeValueColor(this, R.attr.picture_crop_title_color);
+            }
+
+            // 兼容单独动态设置主题方式
+            isChangeStatusBarFontColor = config.isChangeStatusBarFontColor;
+            if (!isChangeStatusBarFontColor) {
+                // 是否改变裁剪页状态栏字体颜色 黑白切换
+                isChangeStatusBarFontColor = AttrsUtils.getTypeValueBoolean(this, R.attr.picture_statusFontColor);
+            }
+        }
+        options.isOpenWhiteStatusBar(isChangeStatusBarFontColor);
+        options.setToolbarColor(toolbarColor);
+        options.setStatusBarColor(statusColor);
+        options.setToolbarWidgetColor(titleColor);
+        options.setDimmedLayerColor(config.circleDimmedColor);
+        options.setDimmedLayerBorderColor(config.circleDimmedBorderColor);
+        options.setCircleStrokeWidth(config.circleStrokeWidth);
+        options.setCircleDimmedLayer(config.circleDimmedLayer);
+        options.setShowCropFrame(config.showCropFrame);
+        options.setShowCropGrid(config.showCropGrid);
+        options.setDragFrameEnabled(config.isDragFrame);
+        options.setScaleEnabled(config.scaleEnabled);
+        options.setRotateEnabled(config.rotateEnabled);
+        options.setCompressionQuality(config.cropCompressQuality);
+        options.setHideBottomControls(config.hideBottomControls);
+        options.setFreeStyleCropEnabled(config.freeStyleCropEnabled);
+        options.setCropExitAnimation(config.windowAnimationStyle != null
+                ? config.windowAnimationStyle.activityCropExitAnimation : 0);
+        options.setNavBarColor(config.cropStyle != null ? config.cropStyle.cropNavBarColor : 0);
+        boolean isHttp = PictureMimeType.isHttp(originalPath);
+        boolean isAndroidQ = SdkVersionUtils.checkedAndroid_Q();
+        String imgType = isAndroidQ ? PictureMimeType
+                .getLastImgSuffix(PictureMimeType.getMimeType(getContext(), Uri.parse(originalPath)))
+                : PictureMimeType.getLastImgType(originalPath);
+        Uri uri = isHttp || isAndroidQ ? Uri.parse(originalPath) : Uri.fromFile(new File(originalPath));
+        File file = new File(PictureFileUtils.getDiskCacheDir(this),
+                TextUtils.isEmpty(config.renameCropFileName) ? DateUtils.getCreateFileName("IMG_") + imgType : config.renameCropFileName);
+        UCrop.of(uri, Uri.fromFile(file))
+                .withAspectRatio(config.aspect_ratio_x, config.aspect_ratio_y)
+                .withMaxResultSize(config.cropWidth, config.cropHeight)
+                .withOptions(options)
+                .startAnimationActivity(this, config.windowAnimationStyle != null
+                        ? config.windowAnimationStyle.activityCropEnterAnimation : 0);
+    }
+
+    /**
+     * 多图去裁剪
+     *
+     * @param list
+     */
+    protected void startCrop(ArrayList<CutInfo> list) {
+        if (list == null || list.size() == 0) {
+            ToastUtils.s(this, getString(R.string.picture_not_crop_data));
+            return;
+        }
         UCrop.Options options = new UCrop.Options();
         int toolbarColor = 0, statusColor = 0, titleColor = 0;
         boolean isChangeStatusBarFontColor;
@@ -428,102 +503,41 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
         options.setStatusBarColor(statusColor);
         options.setToolbarWidgetColor(titleColor);
         options.setCircleDimmedLayer(config.circleDimmedLayer);
-        options.setShowCropFrame(config.showCropFrame);
-        options.setShowCropGrid(config.showCropGrid);
-        options.setDragFrameEnabled(config.isDragFrame);
-        options.setScaleEnabled(config.scaleEnabled);
-        options.setRotateEnabled(config.rotateEnabled);
-        options.setCompressionQuality(config.cropCompressQuality);
-        options.setHideBottomControls(config.hideBottomControls);
-        options.setFreeStyleCropEnabled(config.freeStyleCropEnabled);
-        options.setCropExitAnimation(config.windowAnimationStyle != null
-                ? config.windowAnimationStyle.activityCropExitAnimation : 0);
-        options.setNavBarColor(config.cropStyle != null ? config.cropStyle.cropNavBarColor : 0);
-        boolean isHttp = PictureMimeType.isHttp(originalPath);
-        boolean isAndroidQ = SdkVersionUtils.checkedAndroid_Q();
-        String imgType = isAndroidQ ? PictureMimeType
-                .getLastImgSuffix(PictureMimeType.getMimeType(getContext(), Uri.parse(originalPath)))
-                : PictureMimeType.getLastImgType(originalPath);
-        Uri uri = isHttp || isAndroidQ ? Uri.parse(originalPath) : Uri.fromFile(new File(originalPath));
-        File file = new File(PictureFileUtils.getDiskCacheDir(this),
-                TextUtils.isEmpty(config.renameCropFileName) ? DateUtils.getCreateFileName("IMG_") + imgType : config.renameCropFileName);
-        UCrop.of(uri, Uri.fromFile(file))
-                .withAspectRatio(config.aspect_ratio_x, config.aspect_ratio_y)
-                .withMaxResultSize(config.cropWidth, config.cropHeight)
-                .withOptions(options)
-                .startAnimation(this, config.windowAnimationStyle != null
-                        ? config.windowAnimationStyle.activityCropEnterAnimation : 0);
-    }
-
-    /**
-     * 多图去裁剪
-     *
-     * @param list
-     */
-    protected void startCrop(ArrayList<CutInfo> list) {
-        if (list == null || list.size() == 0) {
-            ToastUtils.s(this, getString(R.string.picture_not_crop_data));
-            return;
-        }
-        UCropMulti.Options options = new UCropMulti.Options();
-        int toolbarColor = 0, statusColor = 0, titleColor = 0;
-        boolean isChangeStatusBarFontColor;
-        if (config.cropStyle != null) {
-            if (config.cropStyle.cropTitleBarBackgroundColor != 0) {
-                toolbarColor = config.cropStyle.cropTitleBarBackgroundColor;
-            }
-            if (config.cropStyle.cropStatusBarColorPrimaryDark != 0) {
-                statusColor = config.cropStyle.cropStatusBarColorPrimaryDark;
-            }
-            if (config.cropStyle.cropTitleColor != 0) {
-                titleColor = config.cropStyle.cropTitleColor;
-            }
-            isChangeStatusBarFontColor = config.cropStyle.isChangeStatusBarFontColor;
-        } else {
-            if (config.cropTitleBarBackgroundColor != 0) {
-                toolbarColor = config.cropTitleBarBackgroundColor;
-            } else {
-                // 兼容老的Theme方式
-                toolbarColor = AttrsUtils.getTypeValueColor(this, R.attr.picture_crop_toolbar_bg);
-            }
-            if (config.cropStatusBarColorPrimaryDark != 0) {
-                statusColor = config.cropStatusBarColorPrimaryDark;
-            } else {
-                // 兼容老的Theme方式
-                statusColor = AttrsUtils.getTypeValueColor(this, R.attr.picture_crop_status_color);
-            }
-            if (config.cropTitleColor != 0) {
-                titleColor = config.cropTitleColor;
-            } else {
-                // 兼容老的Theme方式
-                titleColor = AttrsUtils.getTypeValueColor(this, R.attr.picture_crop_title_color);
-            }
-
-            // 兼容单独动态设置主题方式
-            isChangeStatusBarFontColor = config.isChangeStatusBarFontColor;
-            if (!isChangeStatusBarFontColor) {
-                // 是否改变裁剪页状态栏字体颜色 黑白切换
-                isChangeStatusBarFontColor = AttrsUtils.getTypeValueBoolean(this, R.attr.picture_statusFontColor);
-            }
-        }
-        options.isOpenWhiteStatusBar(isChangeStatusBarFontColor);
-        options.setToolbarColor(toolbarColor);
-        options.setStatusBarColor(statusColor);
-        options.setToolbarWidgetColor(titleColor);
-        options.setCircleDimmedLayer(config.circleDimmedLayer);
+        options.setDimmedLayerColor(config.circleDimmedColor);
+        options.setDimmedLayerBorderColor(config.circleDimmedBorderColor);
+        options.setCircleStrokeWidth(config.circleStrokeWidth);
         options.setShowCropFrame(config.showCropFrame);
         options.setDragFrameEnabled(config.isDragFrame);
         options.setShowCropGrid(config.showCropGrid);
         options.setScaleEnabled(config.scaleEnabled);
         options.setRotateEnabled(config.rotateEnabled);
+        options.isMultipleSkipCrop(config.isMultipleSkipCrop);
         options.setHideBottomControls(config.hideBottomControls);
         options.setCompressionQuality(config.cropCompressQuality);
         options.setCutListData(list);
+        options.isWithVideoImage(config.isWithVideoImage);
         options.setFreeStyleCropEnabled(config.freeStyleCropEnabled);
         options.setCropExitAnimation(config.windowAnimationStyle != null
                 ? config.windowAnimationStyle.activityCropExitAnimation : 0);
         options.setNavBarColor(config.cropStyle != null ? config.cropStyle.cropNavBarColor : 0);
-        String path = list.size() > 0 ? list.get(0).getPath() : "";
+        int index = 0;
+        int size = list.size();
+        if (config.chooseMode == PictureMimeType.ofAll() && config.isWithVideoImage) {
+            // 视频和图片共存
+            String mimeType = size > 0 ? list.get(index).getMimeType() : "";
+            boolean eqVideo = PictureMimeType.eqVideo(mimeType);
+            if (eqVideo) {
+                // 第一个是视频就跳过直到遍历出图片为止
+                for (int i = 0; i < size; i++) {
+                    CutInfo cutInfo = list.get(i);
+                    if (cutInfo != null && PictureMimeType.eqImage(cutInfo.getMimeType())) {
+                        index = i;
+                        break;
+                    }
+                }
+            }
+        }
+        String path = size > 0 && size > index ? list.get(index).getPath() : "";
         boolean isAndroidQ = SdkVersionUtils.checkedAndroid_Q();
         boolean isHttp = PictureMimeType.isHttp(path);
         String imgType = isAndroidQ ? PictureMimeType
@@ -533,11 +547,11 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
         File file = new File(PictureFileUtils.getDiskCacheDir(this),
                 TextUtils.isEmpty(config.renameCropFileName) ? DateUtils.getCreateFileName("IMG_")
                         + imgType : config.renameCropFileName);
-        UCropMulti.of(uri, Uri.fromFile(file))
+        UCrop.of(uri, Uri.fromFile(file))
                 .withAspectRatio(config.aspect_ratio_x, config.aspect_ratio_y)
                 .withMaxResultSize(config.cropWidth, config.cropHeight)
                 .withOptions(options)
-                .startAnimation(this, config.windowAnimationStyle != null
+                .startAnimationMultipleCropActivity(this, config.windowAnimationStyle != null
                         ? config.windowAnimationStyle.activityCropEnterAnimation : 0);
     }
 
@@ -558,7 +572,7 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
 
 
     /**
-     * 如果没有任何相册，先创建一个最近相册出来
+     * 如果没有任何相册，先创建一个相机胶卷文件夹出来
      *
      * @param folders
      */
@@ -583,7 +597,7 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
      */
     @Nullable
     protected LocalMediaFolder getImageFolder(String path, List<LocalMediaFolder> imageFolders) {
-        File imageFile = new File(path);
+        File imageFile = new File(path.startsWith("content://") ? PictureFileUtils.getPath(getContext(), Uri.parse(path)) : path);
         File folderFile = imageFile.getParentFile();
 
         for (LocalMediaFolder folder : imageFolders) {
@@ -606,9 +620,7 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
     protected void onResult(List<LocalMedia> images) {
         boolean isAndroidQ = SdkVersionUtils.checkedAndroid_Q();
         if (isAndroidQ && config.isAndroidQTransform) {
-            if (!config.isCompress) {
-                mHandler.postDelayed(() -> showPleaseDialog(), isPreviewLoading ? 30 : 0);
-            }
+            showPleaseDialog();
             onResultToAndroidAsy(images);
         } else {
             dismissDialog();
@@ -791,7 +803,7 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
             if (SdkVersionUtils.checkedAndroid_Q()) {
                 imageUri = MediaUtils.createImageUri(getApplicationContext());
                 if (imageUri != null) {
-                    cameraPath = imageUri.toString();
+                    config.cameraPath = imageUri.toString();
                 } else {
                     ToastUtils.s(getContext(), "open is camera error，the uri is empty ");
                     if (config.camera) {
@@ -804,7 +816,7 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
                         : config.chooseMode;
                 File cameraFile = PictureFileUtils.createCameraFile(getApplicationContext(),
                         chooseMode, config.cameraFileName, config.suffixType);
-                cameraPath = cameraFile.getAbsolutePath();
+                config.cameraPath = cameraFile.getAbsolutePath();
                 imageUri = PictureFileUtils.parUri(this, cameraFile);
             }
             if (config.isCameraAroundState) {
@@ -826,7 +838,7 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
             if (SdkVersionUtils.checkedAndroid_Q()) {
                 imageUri = MediaUtils.createVideoUri(getApplicationContext());
                 if (imageUri != null) {
-                    cameraPath = imageUri.toString();
+                    config.cameraPath = imageUri.toString();
                 } else {
                     ToastUtils.s(getContext(), "open is camera error，the uri is empty ");
                     if (config.camera) {
@@ -839,7 +851,7 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
                         PictureConfig.TYPE_ALL ? PictureConfig.TYPE_VIDEO : config.chooseMode;
                 File cameraFile = PictureFileUtils.createCameraFile(getApplicationContext(), chooseMode, config.cameraFileName,
                         config.suffixType);
-                cameraPath = cameraFile.getAbsolutePath();
+                config.cameraPath = cameraFile.getAbsolutePath();
                 imageUri = PictureFileUtils.parUri(this, cameraFile);
             }
             cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, imageUri);
@@ -865,37 +877,6 @@ public abstract class PictureBaseActivity extends AppCompatActivity implements H
             PermissionChecker.requestPermissions(this,
                     new String[]{Manifest.permission.RECORD_AUDIO}, PictureConfig.APPLY_AUDIO_PERMISSIONS_CODE);
         }
-    }
-
-    /**
-     * 多张图片裁剪
-     *
-     * @param data
-     */
-    protected void multiCropHandleResult(Intent data) {
-        List<LocalMedia> medias = new ArrayList<>();
-        List<CutInfo> mCuts = UCropMulti.getOutput(data);
-        int size = mCuts.size();
-        boolean isAndroidQ = SdkVersionUtils.checkedAndroid_Q();
-        for (int i = 0; i < size; i++) {
-            CutInfo c = mCuts.get(i);
-            LocalMedia media = new LocalMedia();
-            media.setId(c.getId());
-            media.setCut(TextUtils.isEmpty(c.getCutPath()) ? false : true);
-            media.setPath(c.getPath());
-            media.setCutPath(c.getCutPath());
-            media.setMimeType(c.getMimeType());
-            media.setWidth(c.getImageWidth());
-            media.setHeight(c.getImageHeight());
-            media.setSize(new File(TextUtils.isEmpty(c.getCutPath())
-                    ? c.getPath() : c.getCutPath()).length());
-            media.setChooseModel(config.chooseMode);
-            if (isAndroidQ) {
-                media.setAndroidQToPath(c.getCutPath());
-            }
-            medias.add(media);
-        }
-        handlerResult(medias);
     }
 
     @Override
